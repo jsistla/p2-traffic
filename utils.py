@@ -4,7 +4,7 @@ Helper and util functions for the network
 
 import tensorflow as tf
 import numpy as np
-import match
+import math
 import time
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
@@ -214,11 +214,15 @@ class ConvNet(object):
         self.LOGITS = ACTIVATION(self.LOGITS)
         self._last_layer = name
     
-    def dropout(self):
+    def dropout(self, from_classfier, value):
         
         if self.LOGITS is None:
             raise ValueError('Add a ConvLayer to the model first.')
-        self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
+        if from_classifer == 'TRUE':
+            self._dropout = value
+            self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
+        else:
+            self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
     
     def pool2d(self, method, kernel_size=2, stride=2, padding='VALID'):
         
@@ -260,7 +264,7 @@ class ConvNet(object):
         plt.tight_layout()
         plt.ylabel('True label')
         plt.xlabel('Predicted label')
-    
+  
     def _batches(self, X, y=None, shuffle=True):
         
         if X.ndim == 3: 
@@ -291,4 +295,5 @@ class ConvNet(object):
             if y is None: y_shuffled.append(0)
             else: y_shuffled.append(y[i,...])
         return (np.array(X_shuffled), np.array(y_shuffled))
+
 
