@@ -214,15 +214,11 @@ class ConvNet(object):
         self.LOGITS = ACTIVATION(self.LOGITS)
         self._last_layer = name
     
-    def dropout(self, from_classfier, value):
+    def dropout(self):
         
         if self.LOGITS is None:
             raise ValueError('Add a ConvLayer to the model first.')
-        if from_classifer == 'TRUE':
-            self._dropout = value
-            self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
-        else:
-            self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
+        self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
     
     def pool2d(self, method, kernel_size=2, stride=2, padding='VALID'):
         
