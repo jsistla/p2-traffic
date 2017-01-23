@@ -1,5 +1,5 @@
 """
-Helper and util functions for the network
+utility helper functions and class definitions for ConvNet class
 """
 
 import tensorflow as tf
@@ -10,7 +10,27 @@ from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 
 class ConvNet(object):
+    """
+    Tensorflow class for ConvNet adds function definitions 
+    for training , calculating the accuracy and the predictions functions
+    Defines the following functions
+    train: Trains the current model with the given training data, softmax
+           CE error measure and ADAM optimizer is used.
+    preditions: returns the predictions of the trained model,
+                returns one-hot encoded values
+    score: Returns the accuracy of the trained model on the provided test data
+    _plt_confusion_matrix: Given one-hot encoded labels and preds, displays a confusion matrix
+                      Ref: http://stackoverflow.com/questions/35572000/how-can-i-plot-a-confusion-matrix
 
+    conv2d: Adds a 2D Convolutional layer to the model.
+            A wrapper on top of tensorflow implementation conv2d
+    pool2d: Adds a 2D pooling layer to the model.
+            A wrapper on top of tensorflow implementation for max or avg pooling
+    fully_connected: Adds a fully connected layer to the model.
+    dropout: Adds dropout to the previous layer 
+             A wrapper on top of tensorflow implementation
+    """
+    
     def __init__(self, learning_rate=0.001, batch_size=256, keep_prob=0.5,
                  image_shape=(32,32), color_channels=1, n_classes=43):
         
@@ -21,10 +41,12 @@ class ConvNet(object):
         self.n_classes = n_classes
         self.train_time = None
         
-        self._data = self._data = tf.placeholder(tf.float32, 
+        self._data = tf.placeholder(tf.float32,
                 [None, image_shape[0], image_shape[1], color_channels],
                 name='data')
-        self._labels = tf.placeholder(tf.float32, [None, n_classes], name='labels')
+        self._labels = tf.placeholder(tf.float32, 
+                [None, n_classes], 
+                name='labels')
         
         self._dropout = tf.placeholder(tf.float32, name='dropout')
         self._keep_prob = keep_prob
@@ -35,9 +57,10 @@ class ConvNet(object):
         self.biases = {}
         self.LOGITS = None
     
-    def train(self, train, val, training_epochs=100, l2_beta=0.001,
-              threshold=0.98, save_loc='Checkpoints/model.ckpt', 
+    def train(self, train, val, max_epochs=100, l2_beta=0.001,
+              threshold=10, save_loc='Checkpoints/model.ckpt',
               OPTIMIZER=tf.train.AdamOptimizer):
+
         if self.LOGITS is None:
             raise ValueError('Add some layers!')
         
@@ -73,11 +96,10 @@ class ConvNet(object):
         
         optimizer = OPTIMIZER(learning_rate=self.LEARNING_RATE)
         optimizer = optimizer.minimize(loss)
-        
-        correct_prediction = tf.equal(tf.argmax(self.LOGITS, 1), 
+
+        correct_prediction = tf.equal(tf.argmax(self.LOGITS, 1),
                                       tf.argmax(self._labels, 1))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-        last_acc = 0
         
         init = tf.global_variables_initializer()
         
@@ -85,34 +107,53 @@ class ConvNet(object):
             print('Starting training process:')
             
             sess.run(init)
+            saver = tf.train.Saver()
+
+            best = {'epoch': 0, 'val_acc': 0, 'last': 0}
+            n_obs = X_train.shape[0]
             start_time = time.clock()
             
-            for epoch in range(training_epochs):
+            for epoch in range(max_epochs):
                 # Train model over all batches
+                n_examples = 0
+                l_running_avg = 0
                 for batch_x, batch_y in self._batches(X_train, y_train):
-                    sess.run(optimizer, feed_dict={self._data: batch_x, 
-                                                   self._labels: batch_y,
-                                                   self._dropout: self._keep_prob})
+                    n_examples += min(self.BATCH_SIZE, n_obs)
+
+                    l_running_avg += sess.run(
+                        [optimizer, loss],
+                        feed_dict={self._data: batch_x,
+                                   self._labels: batch_y,
+                                   self._dropout: self._keep_prob}
+                      )[1]
+
+                    print('\r',
+                          'Epoch: %03d | %05.1f%% - Loss: %2.9f'
+                          % (epoch+1, min(100*n_examples/n_obs, 100.0), l_running_avg*self.BATCH_SIZE/n_examples),
+                          end=''
+                      )
                 
                 # Calculate accuracy over validation set
-                acc = []
+                c = []
                 for batch_x, batch_y in self._batches(X_val, y_val, shuffle=False):
-                    acc.append(sess.run(accuracy, 
-                                        feed_dict={self._data: batch_x,
-                                                   self._labels: batch_y,
-                                                   self._dropout: 1.0}))
+                    c.append(sess.run(accuracy,
+                                      feed_dict={self._data: batch_x,
+                                                 self._labels: batch_y,
+                                                 self._dropout: 1.0}))
                 
-                acc = np.mean(acc)
-                diff = acc - last_acc
-                
-                print('\r', "Epoch: %04d | Validation Accuracy: %2.4f | Change: %2.9f" 
-                      % (epoch+1, acc, diff), end='')
-                
-                if acc > threshold:
-                    print("\nValidation accuracy threshold reached!")
+                c = np.mean(c).astype('float32')
+                print(" | Validation Acc: %2.4f%%" % (c*100.0), end='')
+
+                best['last'] += 1
+
+                if best['val_acc'] < c:
+                    print(' - Best!', end='')
+                    best = {'epoch': epoch, 'val_acc': c, 'last': 0}
+                    saver.save(sess, save_loc)
+
+                if best['last'] >= threshold:
                     break
-                
-                last_acc = acc
+                print()
             
             # Calculate runtime and print out results
             self.train_time = time.clock() - start_time
@@ -120,11 +161,10 @@ class ConvNet(object):
             h, m = divmod(m, 60)
             print("\nOptimization Finished!! Training time: %02dh:%02dm:%02ds"
                   % (h, m, s))
-            
-            # Save trained weights for prediction
-            tf.train.Saver().save(sess, save_loc)
+            print('Best Validation Loss: %2.9f' % best['val_acc'])
+    
     def predict(self, X, save_loc='Checkpoints/model.ckpt'):
-        
+
         assert self._last_layer == 'OUT', "You must train the model first!"
         
         model = tf.nn.softmax(self.LOGITS)
@@ -141,6 +181,7 @@ class ConvNet(object):
         return pred
     
     def score(self, test_data, plot=False, normalize=False):
+
         X, y = test_data
         assert X.shape[0] == y.shape[0], "Different number of obs and labels."
         
@@ -157,7 +198,7 @@ class ConvNet(object):
     
     def conv2d(self, name, kernel_size, depth, input_padding=0, stride=1, 
                ACTIVATION=tf.nn.relu, padding='SAME'):
-
+ 
         assert name not in self.weights, "Layer name must be unique."
         
         if ACTIVATION is None: ACTIVATION=lambda x:x
@@ -186,7 +227,7 @@ class ConvNet(object):
         self._last_layer = name
     
     def fully_connected(self, name, depth, ACTIVATION=tf.nn.relu):
-        
+
         if self.LOGITS is None:
             raise ValueError('Add a ConvLayer first.')
         
@@ -215,13 +256,17 @@ class ConvNet(object):
         self._last_layer = name
     
     def dropout(self):
+        """
+        Adds a dropout layer to the current model.
         
+        Uses the model defined drop probability.
+        """
         if self.LOGITS is None:
             raise ValueError('Add a ConvLayer to the model first.')
         self.LOGITS = tf.nn.dropout(self.LOGITS, self._dropout)
     
     def pool2d(self, method, kernel_size=2, stride=2, padding='VALID'):
-        
+
         if self.LOGITS is None:
             raise ValueError('Add a ConvLayer to the model first.')
         assert method in ('MAX','AVG'), "Method must be MAX or AVG."
@@ -236,7 +281,7 @@ class ConvNet(object):
     
     def _plt_confusion_matrix(self, labels, pred, normalize=False,
                               title='Confusion matrix', cmap=plt.cm.Blues):
-        
+
         labels = [label.argmax() for label in labels]
         pred = [label.argmax() for label in pred]
         
@@ -260,11 +305,11 @@ class ConvNet(object):
         plt.tight_layout()
         plt.ylabel('True label')
         plt.xlabel('Predicted label')
-  
+    
     def _batches(self, X, y=None, shuffle=True):
-        
+
         if X.ndim == 3: 
-            return [X[np.newaxis,...], None]
+            return [X[np.newaxis, ...], None]
         
         batch_size = self.BATCH_SIZE
         n_obs = X.shape[0]
@@ -272,10 +317,11 @@ class ConvNet(object):
         
         if shuffle:
             X, y = self._shuffle(X, y)
-        
-        return [[X[batch : min(n_obs, batch+batch_size)],
-                 [0] if y is None else y[batch : min(n_obs, batch+batch_size)]]
-                for batch in range(0, n_batches*batch_size, batch_size)]
+
+        for batch in range(0, n_batches*batch_size, batch_size):
+            batch_x = X[batch:min(n_obs, batch+batch_size)]
+            batch_y = 0 if y is None else y[batch:min(n_obs, batch+batch_size)]
+            yield batch_x, batch_y
     
     @staticmethod
     def _shuffle(X, y=None):
@@ -291,5 +337,3 @@ class ConvNet(object):
             if y is None: y_shuffled.append(0)
             else: y_shuffled.append(y[i,...])
         return (np.array(X_shuffled), np.array(y_shuffled))
-
-
